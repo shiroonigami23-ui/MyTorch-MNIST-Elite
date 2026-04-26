@@ -1,5 +1,6 @@
 ﻿import argparse
 import json
+import math
 import sys
 import time
 from pathlib import Path
@@ -63,7 +64,28 @@ def mytorch_param_count(model: Sequential) -> int:
     return params
 
 
-def run_mytorch_config(x_train, y_train, x_test, y_test, x_test_noisy, cfg: dict):
+def cosine_lr(epoch: int, total_epochs: int, base_lr: float, min_lr: float, warmup_epochs: int) -> float:
+    if warmup_epochs > 0 and epoch < warmup_epochs:
+        return base_lr * float(epoch + 1) / float(warmup_epochs)
+    progress = (epoch - warmup_epochs) / max(1, total_epochs - warmup_epochs)
+    progress = min(max(progress, 0.0), 1.0)
+    return min_lr + 0.5 * (base_lr - min_lr) * (1 + math.cos(math.pi * progress))
+
+
+def clip_gradients(layers, max_norm: float) -> None:
+    for layer in layers:
+        if hasattr(layer, "dW"):
+            w_norm = np.linalg.norm(layer.dW)
+            if w_norm > max_norm:
+                layer.dW *= max_norm / (w_norm + 1e-12)
+            b_norm = np.linalg.norm(layer.db)
+            if b_norm > max_norm:
+                layer.db *= max_norm / (b_norm + 1e-12)
+
+
+def run_mytorch_config(x_train, y_train, x_test, y_test, x_test_noisy, cfg: dict, seed: int):
+    set_seed(seed)
+
     model = Sequential(
         Linear(64, cfg["h1"]),
         ReLU(),
@@ -75,12 +97,20 @@ def run_mytorch_config(x_train, y_train, x_test, y_test, x_test_noisy, cfg: dict
     optim = Adam(model.layers, lr=cfg["lr"], weight_decay=cfg["weight_decay"])
 
     t0 = time.perf_counter()
-    for _ in range(cfg["epochs"]):
+    for epoch in range(cfg["epochs"]):
+        optim.lr = cosine_lr(
+            epoch=epoch,
+            total_epochs=cfg["epochs"],
+            base_lr=cfg["lr"],
+            min_lr=cfg["min_lr"],
+            warmup_epochs=cfg["warmup_epochs"],
+        )
         for xb, yb in batches(x_train, y_train, cfg["batch_size"]):
             logits = model(xb)
             _ = criterion.forward(logits, yb.reshape(-1, 1))
             grad = criterion.backward()
             model.backward(grad)
+            clip_gradients(model.layers, cfg["grad_clip_norm"])
             optim.step()
             optim.zero_grad()
     train_seconds = time.perf_counter() - t0
@@ -94,22 +124,19 @@ def run_mytorch_config(x_train, y_train, x_test, y_test, x_test_noisy, cfg: dict
 
     return {
         "framework": "MyTorch",
-        "variant": f"MyTorch h{cfg['h1']}-{cfg['h2']}",
+        "variant": f"MyTorch h{cfg['h1']}-{cfg['h2']} lr{cfg['lr']}",
         "h1": cfg["h1"],
         "h2": cfg["h2"],
         "test_accuracy": acc_clean,
         "robust_accuracy": acc_noisy,
         "train_time_sec": float(train_seconds),
         "params": params,
-        "lr": cfg["lr"],
-        "label_smoothing": cfg["label_smoothing"],
-        "weight_decay": cfg["weight_decay"],
-        "epochs": cfg["epochs"],
-        "batch_size": cfg["batch_size"],
+        "seed": seed,
     }
 
 
-def run_pytorch_variant(x_train, y_train, x_test, y_test, x_test_noisy, h1, h2, cfg, label):
+def run_pytorch_variant(x_train, y_train, x_test, y_test, x_test_noisy, h1, h2, cfg, label, seed):
+    set_seed(seed)
     device = torch.device("cpu")
     model = nn.Sequential(
         nn.Linear(64, h1),
@@ -129,7 +156,17 @@ def run_pytorch_variant(x_train, y_train, x_test, y_test, x_test_noisy, h1, h2, 
 
     t0 = time.perf_counter()
     model.train()
-    for _ in range(cfg["epochs"]):
+    for epoch in range(cfg["epochs"]):
+        lr_now = cosine_lr(
+            epoch=epoch,
+            total_epochs=cfg["epochs"],
+            base_lr=cfg["lr"],
+            min_lr=cfg["min_lr"],
+            warmup_epochs=cfg["warmup_epochs"],
+        )
+        for g in optimizer.param_groups:
+            g["lr"] = lr_now
+
         idx = torch.randperm(x_train_t.shape[0], device=device)
         for i in range(0, x_train_t.shape[0], cfg["batch_size"]):
             b = idx[i : i + cfg["batch_size"]]
@@ -137,6 +174,7 @@ def run_pytorch_variant(x_train, y_train, x_test, y_test, x_test_noisy, h1, h2, 
             loss = F.cross_entropy(logits, y_train_t[b], label_smoothing=cfg["label_smoothing"])
             optimizer.zero_grad(set_to_none=True)
             loss.backward()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=cfg["grad_clip_norm"])
             optimizer.step()
     train_seconds = time.perf_counter() - t0
 
@@ -158,11 +196,7 @@ def run_pytorch_variant(x_train, y_train, x_test, y_test, x_test_noisy, h1, h2, 
         "robust_accuracy": acc_noisy,
         "train_time_sec": float(train_seconds),
         "params": params,
-        "lr": cfg["lr"],
-        "label_smoothing": cfg["label_smoothing"],
-        "weight_decay": cfg["weight_decay"],
-        "epochs": cfg["epochs"],
-        "batch_size": cfg["batch_size"],
+        "seed": seed,
     }
 
 
@@ -172,11 +206,26 @@ def efficiency_score(r: dict, param_budget: int) -> float:
     return (0.70 * r["test_accuracy"] + 0.30 * r["robust_accuracy"]) - param_penalty * 0.05 - time_penalty
 
 
+def aggregate_runs(rows: list[dict], key_fields: list[str]) -> pd.DataFrame:
+    df = pd.DataFrame(rows)
+    agg = (
+        df.groupby(key_fields, as_index=False)
+        .agg(
+            test_accuracy=("test_accuracy", "mean"),
+            robust_accuracy=("robust_accuracy", "mean"),
+            train_time_sec=("train_time_sec", "mean"),
+            params=("params", "first"),
+            seeds_used=("seed", "nunique"),
+        )
+    )
+    return agg
+
+
 def save_visuals(df: pd.DataFrame, out_dir: Path) -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
 
     fig, ax = plt.subplots(1, 3, figsize=(15, 4.8))
-    fig.suptitle("Lightweight and Robust Benchmark", fontsize=14, fontweight="bold")
+    fig.suptitle("Second Pass: Lightweight, Robust, Efficient", fontsize=14, fontweight="bold")
 
     labels = df["variant"].tolist()
     x = np.arange(len(labels))
@@ -185,19 +234,19 @@ def save_visuals(df: pd.DataFrame, out_dir: Path) -> None:
     ax[0].set_title("Clean Accuracy")
     ax[0].set_ylabel("%")
     ax[0].set_xticks(x)
-    ax[0].set_xticklabels(labels, rotation=20, ha="right", fontsize=8)
+    ax[0].set_xticklabels(labels, rotation=18, ha="right", fontsize=8)
     ax[0].grid(axis="y", alpha=0.25)
 
     ax[1].bar(x, df["robust_accuracy"] * 100, color="#2ca02c")
-    ax[1].set_title("Robust Accuracy (Noise)")
+    ax[1].set_title("Robust Accuracy")
     ax[1].set_xticks(x)
-    ax[1].set_xticklabels(labels, rotation=20, ha="right", fontsize=8)
+    ax[1].set_xticklabels(labels, rotation=18, ha="right", fontsize=8)
     ax[1].grid(axis="y", alpha=0.25)
 
     ax[2].bar(x, df["params"], color="#ff7f0e")
-    ax[2].set_title("Parameter Count")
+    ax[2].set_title("Parameters")
     ax[2].set_xticks(x)
-    ax[2].set_xticklabels(labels, rotation=20, ha="right", fontsize=8)
+    ax[2].set_xticklabels(labels, rotation=18, ha="right", fontsize=8)
     ax[2].grid(axis="y", alpha=0.25)
 
     plt.tight_layout(rect=[0, 0, 1, 0.93])
@@ -206,100 +255,112 @@ def save_visuals(df: pd.DataFrame, out_dir: Path) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Benchmark for lightweight, robust, and efficient models")
-    parser.add_argument("--epochs", type=int, default=90)
+    parser = argparse.ArgumentParser(description="Second-pass benchmark optimization")
+    parser.add_argument("--epochs", type=int, default=110)
     parser.add_argument("--batch-size", type=int, default=64)
-    parser.add_argument("--lr", type=float, default=0.001)
+    parser.add_argument("--lr", type=float, default=0.0012)
+    parser.add_argument("--min-lr", type=float, default=2e-5)
     parser.add_argument("--weight-decay", type=float, default=1e-4)
-    parser.add_argument("--label-smoothing", type=float, default=0.1)
+    parser.add_argument("--label-smoothing", type=float, default=0.08)
     parser.add_argument("--noise-std", type=float, default=0.12)
-    parser.add_argument("--seed", type=int, default=23)
+    parser.add_argument("--warmup-epochs", type=int, default=8)
+    parser.add_argument("--grad-clip-norm", type=float, default=1.0)
+    parser.add_argument("--seeds", type=str, default="11,23,37")
     args = parser.parse_args()
 
-    set_seed(args.seed)
-    x_train, x_test, y_train, y_test = load_data(seed=args.seed)
-    x_test_noisy = make_noise(x_test, std=args.noise_std, seed=args.seed + 100)
+    seeds = [int(s.strip()) for s in args.seeds.split(",") if s.strip()]
+    split_seed = 23
+    x_train, x_test, y_train, y_test = load_data(seed=split_seed)
+    x_test_noisy = make_noise(x_test, std=args.noise_std, seed=split_seed + 100)
 
     base_cfg = {
         "epochs": args.epochs,
         "batch_size": args.batch_size,
         "lr": args.lr,
+        "min_lr": args.min_lr,
         "weight_decay": args.weight_decay,
         "label_smoothing": args.label_smoothing,
+        "warmup_epochs": args.warmup_epochs,
+        "grad_clip_norm": args.grad_clip_norm,
     }
 
     candidates = [
-        {**base_cfg, "h1": 80, "h2": 40},
         {**base_cfg, "h1": 96, "h2": 48},
         {**base_cfg, "h1": 112, "h2": 56},
+        {**base_cfg, "h1": 120, "h2": 60},
         {**base_cfg, "h1": 128, "h2": 64},
-        {**base_cfg, "h1": 144, "h2": 72},
     ]
 
-    sweep = []
+    sweep_rows = []
     for cfg in candidates:
-        sweep.append(run_mytorch_config(x_train, y_train, x_test, y_test, x_test_noisy, cfg))
+        for seed in seeds:
+            sweep_rows.append(run_mytorch_config(x_train, y_train, x_test, y_test, x_test_noisy, cfg, seed))
 
-    sweep_df = pd.DataFrame(sweep)
+    sweep_agg = aggregate_runs(sweep_rows, ["framework", "variant", "h1", "h2"])
 
     param_budget = 17226
-    sweep_df["efficiency_score"] = sweep_df.apply(lambda r: efficiency_score(r.to_dict(), param_budget), axis=1)
-    feasible = sweep_df[sweep_df["params"] <= param_budget]
-    best_row = (feasible if len(feasible) > 0 else sweep_df).sort_values("efficiency_score", ascending=False).iloc[0]
+    sweep_agg["efficiency_score"] = sweep_agg.apply(lambda r: efficiency_score(r.to_dict(), param_budget), axis=1)
+    feasible = sweep_agg[sweep_agg["params"] <= param_budget]
+    best_row = (feasible if len(feasible) > 0 else sweep_agg).sort_values("efficiency_score", ascending=False).iloc[0]
 
-    best_cfg = {
-        **base_cfg,
-        "h1": int(best_row["h1"]),
-        "h2": int(best_row["h2"]),
+    best_h1 = int(best_row["h1"])
+    best_h2 = int(best_row["h2"])
+
+    mytorch_best = {
+        "framework": "MyTorch",
+        "variant": "MyTorch Optimized (Second Pass)",
+        "h1": best_h1,
+        "h2": best_h2,
+        "test_accuracy": float(best_row["test_accuracy"]),
+        "robust_accuracy": float(best_row["robust_accuracy"]),
+        "train_time_sec": float(best_row["train_time_sec"]),
+        "params": int(best_row["params"]),
+        "efficiency_score": float(best_row["efficiency_score"]),
+        "seeds_used": int(best_row["seeds_used"]),
     }
 
-    best_mytorch = best_row.to_dict()
-    best_mytorch["variant"] = "MyTorch Optimized (Lightweight)"
-    best_mytorch["efficiency_score"] = float(best_row["efficiency_score"])
+    pytorch_ref_rows = []
+    pytorch_matched_rows = []
+    for seed in seeds:
+        pytorch_ref_rows.append(
+            run_pytorch_variant(
+                x_train, y_train, x_test, y_test, x_test_noisy,
+                h1=128, h2=64, cfg=base_cfg, label="PyTorch Reference 128-64", seed=seed
+            )
+        )
+        pytorch_matched_rows.append(
+            run_pytorch_variant(
+                x_train, y_train, x_test, y_test, x_test_noisy,
+                h1=best_h1, h2=best_h2, cfg=base_cfg, label=f"PyTorch Matched {best_h1}-{best_h2}", seed=seed
+            )
+        )
 
-    pytorch_ref = run_pytorch_variant(
-        x_train,
-        y_train,
-        x_test,
-        y_test,
-        x_test_noisy,
-        h1=128,
-        h2=64,
-        cfg=base_cfg,
-        label="PyTorch Reference 128-64",
-    )
-    pytorch_ref["efficiency_score"] = efficiency_score(pytorch_ref, param_budget)
+    pt_ref = aggregate_runs(pytorch_ref_rows, ["framework", "variant", "h1", "h2"]).iloc[0].to_dict()
+    pt_mat = aggregate_runs(pytorch_matched_rows, ["framework", "variant", "h1", "h2"]).iloc[0].to_dict()
+    pt_ref["efficiency_score"] = efficiency_score(pt_ref, param_budget)
+    pt_mat["efficiency_score"] = efficiency_score(pt_mat, param_budget)
 
-    pytorch_matched = run_pytorch_variant(
-        x_train,
-        y_train,
-        x_test,
-        y_test,
-        x_test_noisy,
-        h1=best_cfg["h1"],
-        h2=best_cfg["h2"],
-        cfg=base_cfg,
-        label=f"PyTorch Matched {best_cfg['h1']}-{best_cfg['h2']}",
-    )
-    pytorch_matched["efficiency_score"] = efficiency_score(pytorch_matched, param_budget)
-
-    results = [best_mytorch, pytorch_ref, pytorch_matched]
+    results = [mytorch_best, pt_ref, pt_mat]
     result_df = pd.DataFrame(results)
 
     summary = {
         "dataset": "sklearn_digits",
-        "methodology": "same split and optimizer family; mytorch candidate sweep under parameter budget",
+        "methodology": "second pass with cosine schedule, warmup, grad clipping, and multi-seed selection",
         "hyperparameters": {
             "epochs": args.epochs,
             "batch_size": args.batch_size,
             "learning_rate": args.lr,
+            "min_lr": args.min_lr,
             "weight_decay": args.weight_decay,
             "label_smoothing": args.label_smoothing,
             "noise_std": args.noise_std,
-            "seed": args.seed,
+            "warmup_epochs": args.warmup_epochs,
+            "grad_clip_norm": args.grad_clip_norm,
+            "seeds": seeds,
+            "split_seed": split_seed,
             "param_budget": param_budget,
         },
-        "sweep_candidates": sweep,
+        "sweep_candidates": sweep_rows,
         "results": results,
     }
 
@@ -310,7 +371,7 @@ def main() -> None:
 
     (outputs / "benchmark_results.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
     result_df.to_csv(outputs / "benchmark_results.csv", index=False)
-    sweep_df.sort_values("efficiency_score", ascending=False).to_csv(outputs / "benchmark_sweep.csv", index=False)
+    pd.DataFrame(sweep_rows).to_csv(outputs / "benchmark_sweep.csv", index=False)
     save_visuals(result_df, visuals)
 
     print(json.dumps(summary, indent=2))

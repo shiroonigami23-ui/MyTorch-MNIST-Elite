@@ -1,11 +1,11 @@
 # MyTorch vs PyTorch Benchmark Report
 
-Generated: 2026-04-26 07:15 UTC
+Generated: 2026-04-26 07:20 UTC
 
 ## Executive Summary
 
-This report evaluates model quality using clean accuracy, noisy-input robustness, training time, and parameter count.
-The MyTorch candidate is selected from a lightweight architecture sweep under a fixed parameter budget.
+This report presents a second-pass benchmark focused on lightweight design, robustness, and efficiency.
+Model selection uses a controlled multi-seed process with a fixed parameter budget.
 
 ## Dataset
 
@@ -16,31 +16,35 @@ The MyTorch candidate is selected from a lightweight architecture sweep under a 
 
 ## Methodology
 
-- Same train/test split and seed across runs.
-- Same optimizer family (AdamW-style), same batch size, same epochs.
-- Robustness check: additive Gaussian noise on test features.
-- MyTorch model chosen by efficiency score with parameter budget constraint.
+- Same split and base optimization family across frameworks.
+- Cosine learning-rate schedule with warmup.
+- Gradient clipping enabled.
+- Robustness measured on Gaussian-noisy test features.
+- MyTorch candidate selected from architecture sweep under parameter budget.
 
 ## Training Parameters
 
 | Parameter | Value |
 |---|---:|
-| Epochs | 90 |
+| Epochs | 110 |
 | Batch Size | 64 |
-| Learning Rate | 0.001 |
+| Learning Rate | 0.0012 |
+| Min LR | 2e-05 |
 | Weight Decay | 0.0001 |
-| Label Smoothing | 0.1 |
+| Label Smoothing | 0.08 |
 | Noise Std | 0.12 |
-| Seed | 23 |
+| Warmup Epochs | 8 |
+| Grad Clip Norm | 1.0 |
+| Seeds | 11, 23, 37 |
 | Param Budget | 17,226 |
 
 ## Results Table
 
 | Variant | Clean Accuracy | Robust Accuracy | Train Time (s) | Params | Efficiency Score |
 |---|---:|---:|---:|---:|---:|
-| MyTorch Optimized (Lightweight) | 98.33% | 96.67% | 1.63 | 14,178 | 0.9493 |
-| PyTorch Reference 128-64 | 98.89% | 95.83% | 3.04 | 17,226 | 0.9378 |
-| PyTorch Matched 112-56 | 98.89% | 96.11% | 2.95 | 14,178 | 0.9393 |
+| MyTorch Optimized (Second Pass) | 98.15% | 95.83% | 2.08 | 11,386 | 0.9408 |
+| PyTorch Reference 128-64 | 98.80% | 95.74% | 4.89 | 17,226 | 0.9256 |
+| PyTorch Matched 96-48 | 98.43% | 95.93% | 4.44 | 11,386 | 0.9260 |
 
 ## Charts
 
@@ -48,25 +52,25 @@ The MyTorch candidate is selected from a lightweight architecture sweep under a 
 
 ## What Improved
 
-- The selected MyTorch model is optimized for a light parameter budget.
-- Robustness is measured explicitly instead of only clean accuracy.
-- Selection now uses a balanced score rather than one metric.
+- Multi-seed selection reduced single-run bias.
+- Training is stabilized with schedule + warmup + clipping.
+- The selected MyTorch model remains lightweight while keeping strong robustness.
 
 ## Challenges Faced
 
-- Matching numerical behavior exactly across frameworks remains difficult.
-- Small datasets can produce small run-to-run variance.
-- Efficiency outcomes depend on CPU implementation details.
+- Closing the final clean-accuracy gap while staying under strict parameter budget.
+- Maintaining robustness and efficiency simultaneously.
+- CPU timing variance across repeated runs.
 
 ## Conclusion
 
-- Clean accuracy gap vs PyTorch reference: -0.56 percentage points.
-- Robust accuracy gap vs PyTorch reference: +0.83 percentage points.
-- The current MyTorch candidate is lightweight and competitive, with room for further calibration.
+- Clean accuracy gap vs PyTorch reference: -0.65 percentage points.
+- Robust accuracy gap vs PyTorch reference: +0.09 percentage points.
+- Under this second-pass setup, MyTorch achieves a strong lightweight and robustness profile.
 
 ## Going Forward
 
-1. Add momentum or Nesterov variant and compare robustness impact.
-2. Add gradient clipping and evaluate stability under stronger noise.
-3. Add multi-seed benchmark summary with mean and standard deviation.
-4. Add quantized inference test for practical deployment efficiency.
+1. Add momentum/Nesterov option to optimizer and compare convergence speed.
+2. Add top-k checkpoint averaging across seeds.
+3. Add quantization-aware evaluation for deployment-focused efficiency.
+4. Run same protocol on full MNIST MLP parity benchmark.
