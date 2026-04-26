@@ -1,6 +1,6 @@
 ﻿---
 title: MyTorch MNIST Elite Demo
-emoji: rocket
+emoji: 🚀
 colorFrom: blue
 colorTo: yellow
 sdk: gradio
