@@ -1,4 +1,13 @@
 {
-  "test_loss": 0.1289,
-  "test_accuracy": 0.9626
+  "test_loss": 0.0221,
+  "test_accuracy": 0.9925,
+  "best_val_accuracy": 0.9933,
+  "final_train_accuracy": 0.9932,
+  "epochs_requested": 12,
+  "epochs_ran": 11,
+  "batch_size": 128,
+  "train_samples": 60000,
+  "test_samples": 10000,
+  "model_type": "lightweight_cnn_v2",
+  "params": 307442
 }

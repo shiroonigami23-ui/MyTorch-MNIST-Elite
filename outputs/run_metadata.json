@@ -1,1 +1,1 @@
-﻿{"run_name":"kaggle-r-v5","runtime":"kaggle-r-notebook","device":"gpu","notes":"Completed Kaggle kernel run version 5."}
+﻿{"run_name":"kaggle-r-v6-efficient-cnn","runtime":"kaggle-r-notebook","device":"gpu","notes":"Efficient CNN v2 with separable conv, batchnorm, LR scheduling, and early stopping."}
