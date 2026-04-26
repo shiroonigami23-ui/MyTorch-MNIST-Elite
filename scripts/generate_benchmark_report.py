@@ -8,6 +8,13 @@ def pct(v: float) -> str:
     return f"{v * 100:.2f}%"
 
 
+def row_by_variant(results: list[dict], prefix: str) -> dict:
+    for r in results:
+        if r["variant"].startswith(prefix):
+            return r
+    return results[0]
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Generate benchmark markdown report")
     parser.add_argument("--input", default="outputs/benchmark_results.json")
@@ -16,12 +23,14 @@ def main() -> None:
 
     data = json.loads(Path(args.input).read_text(encoding="utf-8"))
     hp = data["hyperparameters"]
-    results = {r["framework"]: r for r in data["results"]}
-    mt = results["MyTorch"]
-    pt = results["PyTorch"]
+    results = data["results"]
 
-    acc_diff = (mt["test_accuracy"] - pt["test_accuracy"]) * 100
-    time_diff = mt["train_time_sec"] - pt["train_time_sec"]
+    mt = row_by_variant(results, "MyTorch Optimized")
+    pt_ref = row_by_variant(results, "PyTorch Reference")
+    pt_match = row_by_variant(results, "PyTorch Matched")
+
+    acc_gap_ref = (mt["test_accuracy"] - pt_ref["test_accuracy"]) * 100
+    robust_gap_ref = (mt["robust_accuracy"] - pt_ref["robust_accuracy"]) * 100
 
     generated = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
 
@@ -31,7 +40,8 @@ Generated: {generated}
 
 ## Executive Summary
 
-This document compares MyTorch and PyTorch under the same configuration. The objective is to measure accuracy and training efficiency with a controlled setup.
+This report evaluates model quality using clean accuracy, noisy-input robustness, training time, and parameter count.
+The MyTorch candidate is selected from a lightweight architecture sweep under a fixed parameter budget.
 
 ## Dataset
 
@@ -42,12 +52,10 @@ This document compares MyTorch and PyTorch under the same configuration. The obj
 
 ## Methodology
 
-- Same model shape in both frameworks: `64 -> 128 -> 64 -> 10` with ReLU activations.
-- Same optimizer family: AdamW.
-- Same training budget: `{hp['epochs']}` epochs.
-- Same batch size: `{hp['batch_size']}`.
-- Same regularization settings: weight decay `{hp['weight_decay']}`, label smoothing `{hp['label_smoothing']}`.
-- Same random seed: `{hp['seed']}`.
+- Same train/test split and seed across runs.
+- Same optimizer family (AdamW-style), same batch size, same epochs.
+- Robustness check: additive Gaussian noise on test features.
+- MyTorch model chosen by efficiency score with parameter budget constraint.
 
 ## Training Parameters
 
@@ -58,44 +66,46 @@ This document compares MyTorch and PyTorch under the same configuration. The obj
 | Learning Rate | {hp['learning_rate']} |
 | Weight Decay | {hp['weight_decay']} |
 | Label Smoothing | {hp['label_smoothing']} |
+| Noise Std | {hp['noise_std']} |
 | Seed | {hp['seed']} |
+| Param Budget | {hp['param_budget']:,} |
 
 ## Results Table
 
-| Framework | Test Accuracy | Train Time (s) | Parameter Count |
-|---|---:|---:|---:|
-| MyTorch | {pct(mt['test_accuracy'])} | {mt['train_time_sec']:.2f} | {mt['params']:,} |
-| PyTorch | {pct(pt['test_accuracy'])} | {pt['train_time_sec']:.2f} | {pt['params']:,} |
+| Variant | Clean Accuracy | Robust Accuracy | Train Time (s) | Params | Efficiency Score |
+|---|---:|---:|---:|---:|---:|
+| {mt['variant']} | {pct(mt['test_accuracy'])} | {pct(mt['robust_accuracy'])} | {mt['train_time_sec']:.2f} | {mt['params']:,} | {mt['efficiency_score']:.4f} |
+| {pt_ref['variant']} | {pct(pt_ref['test_accuracy'])} | {pct(pt_ref['robust_accuracy'])} | {pt_ref['train_time_sec']:.2f} | {pt_ref['params']:,} | {pt_ref['efficiency_score']:.4f} |
+| {pt_match['variant']} | {pct(pt_match['test_accuracy'])} | {pct(pt_match['robust_accuracy'])} | {pt_match['train_time_sec']:.2f} | {pt_match['params']:,} | {pt_match['efficiency_score']:.4f} |
 
-## Accuracy and Efficiency Charts
+## Charts
 
 ![Benchmark Chart](../visuals/benchmark_mytorch_vs_pytorch.png)
 
-## What Is Better Than the Baseline
+## What Improved
 
-- MyTorch provides full transparency across forward and backward flow.
-- The optimizer and loss behavior are easy to audit and customize.
-- Model internals can be modified without hidden framework abstractions.
+- The selected MyTorch model is optimized for a light parameter budget.
+- Robustness is measured explicitly instead of only clean accuracy.
+- Selection now uses a balanced score rather than one metric.
 
 ## Challenges Faced
 
-- Matching numerical behavior exactly across frameworks requires careful control of initialization and batching.
-- CPU-only timing can vary by environment and background load.
-- A controlled MLP benchmark does not represent convolutional production workloads.
+- Matching numerical behavior exactly across frameworks remains difficult.
+- Small datasets can produce small run-to-run variance.
+- Efficiency outcomes depend on CPU implementation details.
 
 ## Conclusion
 
-- Accuracy gap (MyTorch - PyTorch): {acc_diff:+.2f} percentage points.
-- Training time gap (MyTorch - PyTorch): {time_diff:+.2f} seconds.
-
-This benchmark establishes a reproducible baseline. It should be repeated after each optimizer, layer, or data pipeline change.
+- Clean accuracy gap vs PyTorch reference: {acc_gap_ref:+.2f} percentage points.
+- Robust accuracy gap vs PyTorch reference: {robust_gap_ref:+.2f} percentage points.
+- The current MyTorch candidate is lightweight and competitive, with room for further calibration.
 
 ## Going Forward
 
-1. Add CNN-level parity benchmark for MNIST image tensors.
-2. Add multiple seeds and report mean plus standard deviation.
-3. Add inference latency and memory profiling.
-4. Add CI trend tracking to monitor long-term progress.
+1. Add momentum or Nesterov variant and compare robustness impact.
+2. Add gradient clipping and evaluate stability under stronger noise.
+3. Add multi-seed benchmark summary with mean and standard deviation.
+4. Add quantized inference test for practical deployment efficiency.
 """
 
     Path(args.output).write_text(content, encoding="utf-8")

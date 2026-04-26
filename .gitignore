@@ -14,6 +14,7 @@ outputs/*
 !outputs/history_from_kaggle.csv
 !outputs/benchmark_results.json
 !outputs/benchmark_results.csv
+!outputs/benchmark_sweep.csv
 logs/
 wandb/
 

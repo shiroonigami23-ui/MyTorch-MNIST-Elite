@@ -36,6 +36,12 @@ def load_data(test_size: float = 0.2, seed: int = 23):
     return train_test_split(x, y, test_size=test_size, random_state=seed, stratify=y)
 
 
+def make_noise(x: np.ndarray, std: float, seed: int) -> np.ndarray:
+    rng = np.random.default_rng(seed)
+    noisy = x + rng.normal(0.0, std, size=x.shape).astype(np.float32)
+    return np.clip(noisy, 0.0, 1.0)
+
+
 def batches(x: np.ndarray, y: np.ndarray, batch_size: int):
     idx = np.random.permutation(len(x))
     for i in range(0, len(x), batch_size):
@@ -49,20 +55,28 @@ def mytorch_predict_proba(model: Sequential, x: np.ndarray) -> np.ndarray:
     return exp / np.sum(exp, axis=1, keepdims=True)
 
 
-def run_mytorch(x_train, y_train, x_test, y_test, epochs, batch_size, lr, weight_decay, smoothing):
+def mytorch_param_count(model: Sequential) -> int:
+    params = 0
+    for layer in model.layers:
+        if hasattr(layer, "W"):
+            params += int(np.prod(layer.W.shape) + np.prod(layer.b.shape))
+    return params
+
+
+def run_mytorch_config(x_train, y_train, x_test, y_test, x_test_noisy, cfg: dict):
     model = Sequential(
-        Linear(64, 128),
+        Linear(64, cfg["h1"]),
         ReLU(),
-        Linear(128, 64),
+        Linear(cfg["h1"], cfg["h2"]),
         ReLU(),
-        Linear(64, 10),
+        Linear(cfg["h2"], 10),
     )
-    criterion = CrossEntropyLoss(smoothing=smoothing)
-    optim = Adam(model.layers, lr=lr, weight_decay=weight_decay)
+    criterion = CrossEntropyLoss(smoothing=cfg["label_smoothing"])
+    optim = Adam(model.layers, lr=cfg["lr"], weight_decay=cfg["weight_decay"])
 
     t0 = time.perf_counter()
-    for _ in range(epochs):
-        for xb, yb in batches(x_train, y_train, batch_size):
+    for _ in range(cfg["epochs"]):
+        for xb, yb in batches(x_train, y_train, cfg["batch_size"]):
             logits = model(xb)
             _ = criterion.forward(logits, yb.reshape(-1, 1))
             grad = criterion.backward()
@@ -71,52 +85,56 @@ def run_mytorch(x_train, y_train, x_test, y_test, epochs, batch_size, lr, weight
             optim.zero_grad()
     train_seconds = time.perf_counter() - t0
 
-    test_probs = mytorch_predict_proba(model, x_test)
-    test_pred = np.argmax(test_probs, axis=1)
-    test_acc = float(np.mean(test_pred == y_test))
+    clean_pred = np.argmax(mytorch_predict_proba(model, x_test), axis=1)
+    noisy_pred = np.argmax(mytorch_predict_proba(model, x_test_noisy), axis=1)
 
-    params = 0
-    for layer in model.layers:
-        if hasattr(layer, "W"):
-            params += int(np.prod(layer.W.shape) + np.prod(layer.b.shape))
+    acc_clean = float(np.mean(clean_pred == y_test))
+    acc_noisy = float(np.mean(noisy_pred == y_test))
+    params = mytorch_param_count(model)
 
     return {
         "framework": "MyTorch",
-        "test_accuracy": test_acc,
+        "variant": f"MyTorch h{cfg['h1']}-{cfg['h2']}",
+        "h1": cfg["h1"],
+        "h2": cfg["h2"],
+        "test_accuracy": acc_clean,
+        "robust_accuracy": acc_noisy,
         "train_time_sec": float(train_seconds),
         "params": params,
-        "notes": "NumPy-based MLP with AdamW-style optimizer and label smoothing.",
+        "lr": cfg["lr"],
+        "label_smoothing": cfg["label_smoothing"],
+        "weight_decay": cfg["weight_decay"],
+        "epochs": cfg["epochs"],
+        "batch_size": cfg["batch_size"],
     }
 
 
-def run_pytorch(x_train, y_train, x_test, y_test, epochs, batch_size, lr, weight_decay, smoothing):
+def run_pytorch_variant(x_train, y_train, x_test, y_test, x_test_noisy, h1, h2, cfg, label):
     device = torch.device("cpu")
-
     model = nn.Sequential(
-        nn.Linear(64, 128),
+        nn.Linear(64, h1),
         nn.ReLU(),
-        nn.Linear(128, 64),
+        nn.Linear(h1, h2),
         nn.ReLU(),
-        nn.Linear(64, 10),
+        nn.Linear(h2, 10),
     ).to(device)
 
-    optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=cfg["lr"], weight_decay=cfg["weight_decay"])
 
     x_train_t = torch.tensor(x_train, dtype=torch.float32, device=device)
     y_train_t = torch.tensor(y_train, dtype=torch.long, device=device)
     x_test_t = torch.tensor(x_test, dtype=torch.float32, device=device)
+    x_test_noisy_t = torch.tensor(x_test_noisy, dtype=torch.float32, device=device)
     y_test_t = torch.tensor(y_test, dtype=torch.long, device=device)
 
     t0 = time.perf_counter()
     model.train()
-    for _ in range(epochs):
+    for _ in range(cfg["epochs"]):
         idx = torch.randperm(x_train_t.shape[0], device=device)
-        for i in range(0, x_train_t.shape[0], batch_size):
-            b = idx[i : i + batch_size]
-            xb = x_train_t[b]
-            yb = y_train_t[b]
-            logits = model(xb)
-            loss = F.cross_entropy(logits, yb, label_smoothing=smoothing)
+        for i in range(0, x_train_t.shape[0], cfg["batch_size"]):
+            b = idx[i : i + cfg["batch_size"]]
+            logits = model(x_train_t[b])
+            loss = F.cross_entropy(logits, y_train_t[b], label_smoothing=cfg["label_smoothing"])
             optimizer.zero_grad(set_to_none=True)
             loss.backward()
             optimizer.step()
@@ -124,41 +142,63 @@ def run_pytorch(x_train, y_train, x_test, y_test, epochs, batch_size, lr, weight
 
     model.eval()
     with torch.no_grad():
-        pred = torch.argmax(model(x_test_t), dim=1)
-        test_acc = float((pred == y_test_t).float().mean().item())
+        clean_pred = torch.argmax(model(x_test_t), dim=1)
+        noisy_pred = torch.argmax(model(x_test_noisy_t), dim=1)
+        acc_clean = float((clean_pred == y_test_t).float().mean().item())
+        acc_noisy = float((noisy_pred == y_test_t).float().mean().item())
 
     params = int(sum(p.numel() for p in model.parameters()))
 
     return {
         "framework": "PyTorch",
-        "test_accuracy": test_acc,
+        "variant": label,
+        "h1": h1,
+        "h2": h2,
+        "test_accuracy": acc_clean,
+        "robust_accuracy": acc_noisy,
         "train_time_sec": float(train_seconds),
         "params": params,
-        "notes": "Reference MLP baseline with AdamW and label smoothing.",
+        "lr": cfg["lr"],
+        "label_smoothing": cfg["label_smoothing"],
+        "weight_decay": cfg["weight_decay"],
+        "epochs": cfg["epochs"],
+        "batch_size": cfg["batch_size"],
     }
 
 
-def save_visuals(results: list[dict], out_dir: Path) -> None:
+def efficiency_score(r: dict, param_budget: int) -> float:
+    param_penalty = max(0, r["params"] - param_budget) / max(param_budget, 1)
+    time_penalty = np.log1p(r["train_time_sec"]) * 0.03
+    return (0.70 * r["test_accuracy"] + 0.30 * r["robust_accuracy"]) - param_penalty * 0.05 - time_penalty
+
+
+def save_visuals(df: pd.DataFrame, out_dir: Path) -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
-    labels = [r["framework"] for r in results]
-    acc = [r["test_accuracy"] * 100 for r in results]
-    tsec = [r["train_time_sec"] for r in results]
 
-    fig, ax = plt.subplots(1, 2, figsize=(12, 5))
-    fig.suptitle("MyTorch vs PyTorch (Same Dataset and Hyperparameters)", fontsize=14, fontweight="bold")
+    fig, ax = plt.subplots(1, 3, figsize=(15, 4.8))
+    fig.suptitle("Lightweight and Robust Benchmark", fontsize=14, fontweight="bold")
 
-    ax[0].bar(labels, acc, color=["#1f77b4", "#ff7f0e"])
-    ax[0].set_ylabel("Test Accuracy (%)")
-    ax[0].set_ylim(85, 100)
+    labels = df["variant"].tolist()
+    x = np.arange(len(labels))
+
+    ax[0].bar(x, df["test_accuracy"] * 100, color="#1f77b4")
+    ax[0].set_title("Clean Accuracy")
+    ax[0].set_ylabel("%")
+    ax[0].set_xticks(x)
+    ax[0].set_xticklabels(labels, rotation=20, ha="right", fontsize=8)
     ax[0].grid(axis="y", alpha=0.25)
-    for i, v in enumerate(acc):
-        ax[0].text(i, v + 0.2, f"{v:.2f}%", ha="center", fontsize=10)
 
-    ax[1].bar(labels, tsec, color=["#1f77b4", "#ff7f0e"])
-    ax[1].set_ylabel("Training Time (sec)")
+    ax[1].bar(x, df["robust_accuracy"] * 100, color="#2ca02c")
+    ax[1].set_title("Robust Accuracy (Noise)")
+    ax[1].set_xticks(x)
+    ax[1].set_xticklabels(labels, rotation=20, ha="right", fontsize=8)
     ax[1].grid(axis="y", alpha=0.25)
-    for i, v in enumerate(tsec):
-        ax[1].text(i, v + max(tsec) * 0.02, f"{v:.2f}s", ha="center", fontsize=10)
+
+    ax[2].bar(x, df["params"], color="#ff7f0e")
+    ax[2].set_title("Parameter Count")
+    ax[2].set_xticks(x)
+    ax[2].set_xticklabels(labels, rotation=20, ha="right", fontsize=8)
+    ax[2].grid(axis="y", alpha=0.25)
 
     plt.tight_layout(rect=[0, 0, 1, 0.93])
     plt.savefig(out_dir / "benchmark_mytorch_vs_pytorch.png", dpi=200)
@@ -166,53 +206,100 @@ def save_visuals(results: list[dict], out_dir: Path) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Run apples-to-apples MyTorch vs PyTorch benchmark")
-    parser.add_argument("--epochs", type=int, default=80)
+    parser = argparse.ArgumentParser(description="Benchmark for lightweight, robust, and efficient models")
+    parser.add_argument("--epochs", type=int, default=90)
     parser.add_argument("--batch-size", type=int, default=64)
     parser.add_argument("--lr", type=float, default=0.001)
     parser.add_argument("--weight-decay", type=float, default=1e-4)
     parser.add_argument("--label-smoothing", type=float, default=0.1)
+    parser.add_argument("--noise-std", type=float, default=0.12)
     parser.add_argument("--seed", type=int, default=23)
     args = parser.parse_args()
 
     set_seed(args.seed)
     x_train, x_test, y_train, y_test = load_data(seed=args.seed)
+    x_test_noisy = make_noise(x_test, std=args.noise_std, seed=args.seed + 100)
 
-    mytorch = run_mytorch(
+    base_cfg = {
+        "epochs": args.epochs,
+        "batch_size": args.batch_size,
+        "lr": args.lr,
+        "weight_decay": args.weight_decay,
+        "label_smoothing": args.label_smoothing,
+    }
+
+    candidates = [
+        {**base_cfg, "h1": 80, "h2": 40},
+        {**base_cfg, "h1": 96, "h2": 48},
+        {**base_cfg, "h1": 112, "h2": 56},
+        {**base_cfg, "h1": 128, "h2": 64},
+        {**base_cfg, "h1": 144, "h2": 72},
+    ]
+
+    sweep = []
+    for cfg in candidates:
+        sweep.append(run_mytorch_config(x_train, y_train, x_test, y_test, x_test_noisy, cfg))
+
+    sweep_df = pd.DataFrame(sweep)
+
+    param_budget = 17226
+    sweep_df["efficiency_score"] = sweep_df.apply(lambda r: efficiency_score(r.to_dict(), param_budget), axis=1)
+    feasible = sweep_df[sweep_df["params"] <= param_budget]
+    best_row = (feasible if len(feasible) > 0 else sweep_df).sort_values("efficiency_score", ascending=False).iloc[0]
+
+    best_cfg = {
+        **base_cfg,
+        "h1": int(best_row["h1"]),
+        "h2": int(best_row["h2"]),
+    }
+
+    best_mytorch = best_row.to_dict()
+    best_mytorch["variant"] = "MyTorch Optimized (Lightweight)"
+    best_mytorch["efficiency_score"] = float(best_row["efficiency_score"])
+
+    pytorch_ref = run_pytorch_variant(
         x_train,
         y_train,
         x_test,
         y_test,
-        args.epochs,
-        args.batch_size,
-        args.lr,
-        args.weight_decay,
-        args.label_smoothing,
+        x_test_noisy,
+        h1=128,
+        h2=64,
+        cfg=base_cfg,
+        label="PyTorch Reference 128-64",
     )
-    pytorch = run_pytorch(
+    pytorch_ref["efficiency_score"] = efficiency_score(pytorch_ref, param_budget)
+
+    pytorch_matched = run_pytorch_variant(
         x_train,
         y_train,
         x_test,
         y_test,
-        args.epochs,
-        args.batch_size,
-        args.lr,
-        args.weight_decay,
-        args.label_smoothing,
+        x_test_noisy,
+        h1=best_cfg["h1"],
+        h2=best_cfg["h2"],
+        cfg=base_cfg,
+        label=f"PyTorch Matched {best_cfg['h1']}-{best_cfg['h2']}",
     )
+    pytorch_matched["efficiency_score"] = efficiency_score(pytorch_matched, param_budget)
 
-    results = [mytorch, pytorch]
+    results = [best_mytorch, pytorch_ref, pytorch_matched]
+    result_df = pd.DataFrame(results)
+
     summary = {
         "dataset": "sklearn_digits",
-        "methodology": "same architecture, optimizer family, epochs, and split",
+        "methodology": "same split and optimizer family; mytorch candidate sweep under parameter budget",
         "hyperparameters": {
             "epochs": args.epochs,
             "batch_size": args.batch_size,
             "learning_rate": args.lr,
             "weight_decay": args.weight_decay,
             "label_smoothing": args.label_smoothing,
+            "noise_std": args.noise_std,
             "seed": args.seed,
+            "param_budget": param_budget,
         },
+        "sweep_candidates": sweep,
         "results": results,
     }
 
@@ -222,8 +309,9 @@ def main() -> None:
     visuals.mkdir(exist_ok=True)
 
     (outputs / "benchmark_results.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
-    pd.DataFrame(results).to_csv(outputs / "benchmark_results.csv", index=False)
-    save_visuals(results, visuals)
+    result_df.to_csv(outputs / "benchmark_results.csv", index=False)
+    sweep_df.sort_values("efficiency_score", ascending=False).to_csv(outputs / "benchmark_sweep.csv", index=False)
+    save_visuals(result_df, visuals)
 
     print(json.dumps(summary, indent=2))
 

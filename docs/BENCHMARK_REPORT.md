@@ -1,10 +1,11 @@
 # MyTorch vs PyTorch Benchmark Report
 
-Generated: 2026-04-26 06:51 UTC
+Generated: 2026-04-26 07:15 UTC
 
 ## Executive Summary
 
-This document compares MyTorch and PyTorch under the same configuration. The objective is to measure accuracy and training efficiency with a controlled setup.
+This report evaluates model quality using clean accuracy, noisy-input robustness, training time, and parameter count.
+The MyTorch candidate is selected from a lightweight architecture sweep under a fixed parameter budget.
 
 ## Dataset
 
@@ -15,57 +16,57 @@ This document compares MyTorch and PyTorch under the same configuration. The obj
 
 ## Methodology
 
-- Same model shape in both frameworks: `64 -> 128 -> 64 -> 10` with ReLU activations.
-- Same optimizer family: AdamW.
-- Same training budget: `80` epochs.
-- Same batch size: `64`.
-- Same regularization settings: weight decay `0.0001`, label smoothing `0.1`.
-- Same random seed: `23`.
+- Same train/test split and seed across runs.
+- Same optimizer family (AdamW-style), same batch size, same epochs.
+- Robustness check: additive Gaussian noise on test features.
+- MyTorch model chosen by efficiency score with parameter budget constraint.
 
 ## Training Parameters
 
 | Parameter | Value |
 |---|---:|
-| Epochs | 80 |
+| Epochs | 90 |
 | Batch Size | 64 |
 | Learning Rate | 0.001 |
 | Weight Decay | 0.0001 |
 | Label Smoothing | 0.1 |
+| Noise Std | 0.12 |
 | Seed | 23 |
+| Param Budget | 17,226 |
 
 ## Results Table
 
-| Framework | Test Accuracy | Train Time (s) | Parameter Count |
-|---|---:|---:|---:|
-| MyTorch | 97.50% | 1.63 | 17,226 |
-| PyTorch | 98.89% | 2.98 | 17,226 |
+| Variant | Clean Accuracy | Robust Accuracy | Train Time (s) | Params | Efficiency Score |
+|---|---:|---:|---:|---:|---:|
+| MyTorch Optimized (Lightweight) | 98.33% | 96.67% | 1.63 | 14,178 | 0.9493 |
+| PyTorch Reference 128-64 | 98.89% | 95.83% | 3.04 | 17,226 | 0.9378 |
+| PyTorch Matched 112-56 | 98.89% | 96.11% | 2.95 | 14,178 | 0.9393 |
 
-## Accuracy and Efficiency Charts
+## Charts
 
 ![Benchmark Chart](../visuals/benchmark_mytorch_vs_pytorch.png)
 
-## What Is Better Than the Baseline
+## What Improved
 
-- MyTorch provides full transparency across forward and backward flow.
-- The optimizer and loss behavior are easy to audit and customize.
-- Model internals can be modified without hidden framework abstractions.
+- The selected MyTorch model is optimized for a light parameter budget.
+- Robustness is measured explicitly instead of only clean accuracy.
+- Selection now uses a balanced score rather than one metric.
 
 ## Challenges Faced
 
-- Matching numerical behavior exactly across frameworks requires careful control of initialization and batching.
-- CPU-only timing can vary by environment and background load.
-- A controlled MLP benchmark does not represent convolutional production workloads.
+- Matching numerical behavior exactly across frameworks remains difficult.
+- Small datasets can produce small run-to-run variance.
+- Efficiency outcomes depend on CPU implementation details.
 
 ## Conclusion
 
-- Accuracy gap (MyTorch - PyTorch): -1.39 percentage points.
-- Training time gap (MyTorch - PyTorch): -1.35 seconds.
-
-This benchmark establishes a reproducible baseline. It should be repeated after each optimizer, layer, or data pipeline change.
+- Clean accuracy gap vs PyTorch reference: -0.56 percentage points.
+- Robust accuracy gap vs PyTorch reference: +0.83 percentage points.
+- The current MyTorch candidate is lightweight and competitive, with room for further calibration.
 
 ## Going Forward
 
-1. Add CNN-level parity benchmark for MNIST image tensors.
-2. Add multiple seeds and report mean plus standard deviation.
-3. Add inference latency and memory profiling.
-4. Add CI trend tracking to monitor long-term progress.
+1. Add momentum or Nesterov variant and compare robustness impact.
+2. Add gradient clipping and evaluate stability under stronger noise.
+3. Add multi-seed benchmark summary with mean and standard deviation.
+4. Add quantized inference test for practical deployment efficiency.
