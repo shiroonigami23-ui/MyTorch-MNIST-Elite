@@ -1,0 +1,8 @@
+﻿numpy>=1.24
+pandas>=2.0
+matplotlib>=3.7
+seaborn>=0.12
+wandb>=0.17
+huggingface_hub>=0.24
+Pillow>=10.0
+gradio>=5.0

@@ -1,71 +1,60 @@
-# 🛠 MyTorch: The Mathematical Blueprint
+﻿# MyTorch Technical Notes
 
-This document provides the formal mathematical derivation for every component in the MyTorch framework, enabling full replication of the logic.
+## 1. Module Abstraction
 
----
+`mytorch/nn/module.py` defines the base module contract:
+- `forward(...)` for inference/training forward path
+- `backward(...)` for gradient propagation
+- `__call__(...)` to support module invocation style
 
-## 1. Linear Layer (Fully Connected)
-The fundamental building block for affine transformations.
+This keeps custom layers consistent and composable.
 
-**Forward Pass:**
-$$Y = XW^T + b$$
-Where $X \in \mathbb{R}^{B \times D_{in}}$, $W \in \mathbb{R}^{D_{out} \times D_{in}}$, and $b \in \mathbb{R}^{D_{out}}$.
+## 2. Linear Layer Formulation
 
-**Backward Pass:**
-* $\frac{\partial L}{\partial W} = (\frac{\partial L}{\partial Y})^T X$
-* $\frac{\partial L}{\partial b} = \sum (\frac{\partial L}{\partial Y})$
-* $\frac{\partial L}{\partial X} = (\frac{\partial L}{\partial Y}) W$
+Forward:
+`Y = XW^T + b`
 
----
+Gradients:
+- `dW = dY^T X`
+- `db = sum(dY)`
+- `dX = dY W`
 
-## 2. Activation Functions
-### ReLU (Rectified Linear Unit)
-**Logic:** $f(z) = \max(0, z)$
-**Gradient:** $f'(z) = 1$ if $z > 0$ else $0$.
+## 3. BatchNorm and Dropout
 
----
+- BatchNorm stabilizes intermediate activations and training dynamics.
+- Dropout reduces overfitting by stochastic neuron masking.
 
-## 3. Batch Normalization (Training Mode)
-Used to stabilize internal covariate shift.
+## 4. Optimizer Stack
 
-**Step-by-Step Transform:**
-1. **Mean:** $\mu_B = \frac{1}{B} \sum X$
-2. **Variance:** $\sigma^2_B = \frac{1}{B} \sum (X - \mu_B)^2$
-3. **Normalize:** $\hat{X} = \frac{X - \mu_B}{\sqrt{\sigma^2_B + \epsilon}}$
-4. **Scale & Shift:** $Y = \gamma \hat{X} + \beta$
+- Adam for adaptive updates.
+- SGD for simpler, controlled baselines.
+- Scheduler hooks available in `mytorch/optim/scheduler.py`.
 
-**Backpropagation:**
-The gradient $\frac{\partial L}{\partial X}$ is computed using the multivariate chain rule to account for the dependency on $\mu_B$ and $\sigma^2_B$.
+## 5. R-based Lightweight Training
 
----
+`scripts/train_mnist_lightweight_kaggle.R`:
+- Uses Keras in R for Kaggle compatibility.
+- Trains a compact MLP baseline on MNIST subset.
+- Saves metrics, training history, confusion matrix, and model checkpoint.
 
-## 4. Optimization: AdamW
-The "Greedy" optimizer used to reach 98.59% accuracy.
+## 6. Result Publication Flow
 
-**Update Equations:**
-For each parameter $\theta$ and gradient $g_t$:
-1. **Momentum:** $m_t = \beta_1 m_{t-1} + (1 - \beta_1) g_t$
-2. **Velocity:** $v_t = \beta_2 v_{t-1} + (1 - \beta_2) g_t^2$
-3. **Bias Correction:** $\hat{m}_t = \frac{m_t}{1 - \beta_1^t}, \quad \hat{v}_t = \frac{v_t}{1 - \beta_2^t}$
-4. **AdamW Update:** $\theta_{t+1} = \theta_t - \eta \left( \frac{\hat{m}_t}{\sqrt{\hat{v}_t} + \epsilon} + \lambda \theta_t \right)$
-*(Where $\lambda$ is the Weight Decay coefficient)*.
+1. Train in Kaggle (R script or notebook).
+2. Save artifacts to `outputs/` and `checkpoints/`.
+3. Upload checkpoint to Hugging Face model repo.
+4. Regenerate `docs/RESULTS.md`.
+5. Refresh HF Space for public proof.
 
----
+## 7. Space Architecture
 
-## 5. Loss Function: Label Smoothing Cross-Entropy
-Prevents overconfidence by softening the target distribution.
+`hf_space/app.py` reads:
+- `outputs/metrics.json` for current KPIs
+- `visuals/` for charts and qualitative progress
 
-**Target Transformation:**
-Instead of a 1-hot vector, the new target $q$ for class $k$ is:
-$$q_k = \begin{cases} 1 - \alpha & \text{if } k = \text{target} \\ \frac{\alpha}{K-1} & \text{otherwise} \end{cases}$$
-Where $\alpha$ is the smoothing factor ($0.1$) and $K$ is the number of classes.
+Tabs expose metrics, visuals, and external project links.
 
-**Loss Calculation:**
-$$L = -\sum q_k \log(p_k)$$
-Where $p$ is the Softmax output.
+## 8. Reproducibility Controls
 
----
-
-## 6. Initialization: Kaiming (He)
-Standard for ReLU networks to prevent vanishing/exploding gradients.
-$$W \sim \mathcal{N}\left(0, \sqrt{\frac{2}{D_{in}}}\right)$$
+- Central config file: `configs/project_config.json`
+- Run metadata file: `outputs/run_metadata.json`
+- Deterministic seed in R training script (`set.seed(23)`)

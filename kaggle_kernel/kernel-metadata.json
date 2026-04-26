@@ -1,0 +1,13 @@
+{
+  "id": "aryanchande23l/mytorch-mnist-elite-r-train",
+  "title": "MyTorch MNIST Elite R Train",
+  "code_file": "notebook.ipynb",
+  "language": "r",
+  "kernel_type": "notebook",
+  "is_private": false,
+  "enable_gpu": true,
+  "enable_internet": true,
+  "dataset_sources": [],
+  "competition_sources": [],
+  "kernel_sources": []
+}

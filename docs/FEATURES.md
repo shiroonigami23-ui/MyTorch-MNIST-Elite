@@ -1,40 +1,43 @@
-# 🚀 MyTorch: Feature Specification
+﻿# MyTorch Feature Specification
 
-This document details the architectural components and advanced optimizations implemented in the **MyTorch** framework.
+MyTorch-MNIST-Elite is a from-scratch deep learning framework focused on clarity, reproducibility, and measurable results.
 
----
+## Core Architecture
 
-## 🏗️ Core Neural Architecture
-MyTorch is built on a modular `Sequential` container system, allowing for rapid prototyping of deep architectures.
+- Modular neural network components under `mytorch/nn/`.
+- Sequential composition for clean forward/backward flow.
+- Fully connected stack optimized for MNIST iteration speed.
 
-### 1. Fundamental Layers
-* **Linear (Dense) Layer:** Fully connected layer with optimized NumPy matrix multiplications and Kaiming/Xavier initialization support.
-* **Sequential Container:** A class-based wrapper that handles the forward and backward flow of tensors through the network stack automatically.
+## Training + Optimization
 
-### 2. Advanced Normalization & Regularization
-* **Batch Normalization (BatchNorm):** Implements trainable $\gamma$ and $eta$ parameters to stabilize internal covariate shift, allowing for higher learning rates and faster convergence.
-* **Dropout:** Stochastic regularization that prevents co-adaptation of neurons by randomly deactivating a fraction (p) of units during training.
+- Optimizers: Adam and SGD (`mytorch/optim/`).
+- Regularization blocks: Dropout and BatchNorm.
+- Lightweight training recipe for fast Kaggle turnaround.
 
----
+## Experiment Tracking
 
-## ⚡ Optimization & Training Elite
-To achieve 98.59% accuracy, MyTorch utilizes industry-standard optimization techniques.
+- W&B logging through `scripts/logger.py`.
+- Hugging Face checkpoint upload/download/list support through `scripts/hf_checkpoint.py`.
+- Generated benchmark docs via `scripts/generate_results_report.py`.
 
-### 3. Optimizer Suite
-* **Adam (Adaptive Moment Estimation):** Implements first and second-moment tracking for per-parameter learning rate adjustment.
-* **AdamW (Weight Decay):** Integrated L2 regularization directly into the Adam update step to prevent weight explosion in deep networks.
-* **SGD with Momentum:** Provides a velocity-based update system for escaping local minima in simpler architectures.
+## Kaggle + R Workflow
 
-### 4. Convergence Strategies
-* **Label Smoothing:** Replaces hard "one-hot" targets with soft distributions. This prevents the model from becoming overconfident and improves the "Digit IQ" on ambiguous handwriting.
-* **StepLR Scheduler:** Automated learning rate decay that "squeezes" the last decimals of accuracy out of the loss landscape.
+- R training script: `scripts/train_mnist_lightweight_kaggle.R`.
+- Artifacts per run:
+  - `outputs/metrics.json`
+  - `outputs/history.csv`
+  - `outputs/confusion_matrix.csv`
+  - `checkpoints/*.keras`
 
----
+## Public Showcase Layer
 
-## 📊 Visual Analytics & Monitoring
-![Feature Activations](../visuals/learned_features.png)
-*Figure 1: Visualization of the first-layer weights showing learned spatial filters.*
+- Space app scaffold in `hf_space/`.
+- Result and proof docs:
+  - `docs/RESULTS.md`
+  - `docs/SHOWCASE.md`
 
-* **Weights & Biases (W&B):** Real-time logging of loss, validation accuracy, and gradient norms.
-* **Hugging Face Hub Integration:** Automated model versioning and cloud storage using Git LFS logic for `.pkl` files.
-* **Confusion Matrix Heatmaps:** Deep-dive analysis into class-specific leakage (e.g., 4 vs 9 confusion).
+## Current Focus
+
+- Push stable 98.75%+ runs with reproducible settings.
+- Improve architecture and training schedule toward 99.0%.
+- Keep every claim backed by metrics, artifacts, and public links.

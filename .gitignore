@@ -1,0 +1,27 @@
+﻿# Python artifacts
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# Local experiment outputs
+checkpoints/
+outputs/*
+!outputs/.gitkeep
+!outputs/run_metadata.json
+!outputs/metrics.sample.json
+!outputs/metrics.json
+!outputs/history_from_kaggle.csv
+logs/
+wandb/
+
+# OS/editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+kaggle_outputs/
+
+# Secrets
+.env
+.env.*

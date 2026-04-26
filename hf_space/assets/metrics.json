@@ -1,0 +1,8 @@
+﻿{
+  "test_loss": null,
+  "test_accuracy": null,
+  "epochs": null,
+  "batch_size": null,
+  "train_samples": null,
+  "test_samples": null
+}

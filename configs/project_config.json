@@ -1,0 +1,15 @@
+﻿{
+  "project": "MyTorch-MNIST-Elite",
+  "kaggle": {
+    "dataset": "mnist",
+    "runtime": "r",
+    "default_epochs": 8,
+    "batch_size": 128,
+    "train_samples": 20000,
+    "test_samples": 5000
+  },
+  "huggingface": {
+    "model_repo": "ShiroOnigami23/MyTorch-MNIST",
+    "space_repo": "ShiroOnigami23/MyTorch-MNIST-Elite-Demo"
+  }
+}
