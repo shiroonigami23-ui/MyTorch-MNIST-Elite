@@ -1,0 +1,45 @@
+﻿name: Benchmark And Docs
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ["main"]
+    paths:
+      - "mytorch/**"
+      - "scripts/**"
+      - "docs/**"
+      - "requirements-benchmark.txt"
+      - ".github/workflows/benchmark-and-docs.yml"
+
+jobs:
+  benchmark:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-benchmark.txt
+
+      - name: Run benchmark pipeline
+        run: |
+          python scripts/run_benchmark_pipeline.py
+
+      - name: Upload benchmark artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-artifacts
+          path: |
+            outputs/benchmark_results.json
+            outputs/benchmark_results.csv
+            visuals/benchmark_mytorch_vs_pytorch.png
+            docs/BENCHMARK_REPORT.md
+            docs/BENCHMARK_REPORT.pdf

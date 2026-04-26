@@ -138,6 +138,24 @@ Results page: [docs/RESULTS.md](./docs/RESULTS.md)
 Public proof board: [docs/SHOWCASE.md](./docs/SHOWCASE.md)
 Deployment guide: [docs/DEPLOYMENT.md](./docs/DEPLOYMENT.md)
 
+## Benchmarking (MyTorch vs PyTorch)
+
+Run strict apples-to-apples benchmark (same data split, architecture, optimizer family, and training budget):
+
+```bash
+python scripts/run_benchmark_pipeline.py
+```
+
+Outputs:
+- `outputs/benchmark_results.json`
+- `outputs/benchmark_results.csv`
+- `visuals/benchmark_mytorch_vs_pytorch.png`
+- `docs/BENCHMARK_REPORT.md`
+- `docs/BENCHMARK_REPORT.pdf`
+
+The repository also includes a CI workflow to regenerate benchmark artifacts:
+- `.github/workflows/benchmark-and-docs.yml`
+
 ## Improvement Ideas
 
 - Add mixed precision support for faster training.

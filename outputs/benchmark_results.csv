@@ -1,0 +1,3 @@
+framework,test_accuracy,train_time_sec,params,notes
+MyTorch,0.975,1.6265376000001197,17226,NumPy-based MLP with AdamW-style optimizer and label smoothing.
+PyTorch,0.9888888597488403,2.980175600000166,17226,Reference MLP baseline with AdamW and label smoothing.

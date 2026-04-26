@@ -1,0 +1,28 @@
+{
+  "dataset": "sklearn_digits",
+  "methodology": "same architecture, optimizer family, epochs, and split",
+  "hyperparameters": {
+    "epochs": 80,
+    "batch_size": 64,
+    "learning_rate": 0.001,
+    "weight_decay": 0.0001,
+    "label_smoothing": 0.1,
+    "seed": 23
+  },
+  "results": [
+    {
+      "framework": "MyTorch",
+      "test_accuracy": 0.975,
+      "train_time_sec": 1.6265376000001197,
+      "params": 17226,
+      "notes": "NumPy-based MLP with AdamW-style optimizer and label smoothing."
+    },
+    {
+      "framework": "PyTorch",
+      "test_accuracy": 0.9888888597488403,
+      "train_time_sec": 2.980175600000166,
+      "params": 17226,
+      "notes": "Reference MLP baseline with AdamW and label smoothing."
+    }
+  ]
+}
